@@ -1,0 +1,4 @@
+- insert:
+    - id: otakuneko-native
+      name: otakuneko-harness-native-plugin
+      config: {}
