@@ -34,4 +34,4 @@ dsh plugin --profile desktop add .\dist\otakuneko-harness-native-plugin-0.2.0-al
 
 然后重新加载 Harness，在目标工作区打开右侧栏 Guide 中的「OtakuNeko 番组」。如 `dsh` 不在 PATH 中，请使用 Harness 安装目录下的 CLI 可执行文件。插件安装包包含其所需的打包依赖，不需要单独运行 OtakuNeko 服务。
 
-本仓库尚未指定源代码开源许可证。打包使用的 undici 许可见 [UNDICI-LICENSE](UNDICI-LICENSE)。
+本项目采用 [MIT 许可证](LICENSE)。打包使用的 undici 许可见 [UNDICI-LICENSE](UNDICI-LICENSE)。

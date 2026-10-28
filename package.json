@@ -3,6 +3,7 @@
   "version": "0.2.0-alpha.12",
   "private": true,
   "description": "Native OtakuNeko capabilities for DeepSeek Harness",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.28.5",
   "main": "lib/index.mjs",
@@ -21,6 +22,7 @@
     "lib/",
     "cordis.patch.yml",
     "README.md",
+    "LICENSE",
     "UNDICI-LICENSE"
   ],
   "engines": {
