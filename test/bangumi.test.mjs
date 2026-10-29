@@ -1,6 +1,57 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+test('search exposes only trusted HTTPS cover and portrait URLs', async () => {
+  const service = createBangumiService({ fetchImpl: async () => Response.json({ total: 2, data: [
+    { id: 1, name: 'A', images: { medium: 'https://lain.bgm.tv/pic/cover/a.jpg' } },
+    { id: 2, name: 'B', images: { medium: 'https://evil.example/a.jpg' } },
+  ] }) });
+  const anime = await service.search('A');
+  const people = await service.searchEntities({ kind: 'voice', keyword: 'A' });
+  assert.equal(anime.items[0].image, 'https://lain.bgm.tv/pic/cover/a.jpg');
+  assert.equal(anime.items[1].image, null);
+  assert.equal(people.items[0].image, 'https://lain.bgm.tv/pic/cover/a.jpg');
+  assert.equal(people.items[1].image, null);
+});
 import { createBangumiService, createFetchRoute } from '../src/bangumi.js';
+
+test('entity search selects official character and person APIs and voice career filter', async () => {
+  const calls = [];
+  const service = createBangumiService({ fetchImpl: async (url, options) => { calls.push({ url, options }); return Response.json({ total: 17, data: [{ id: 6, name: '测试', career: ['seiyu'], short_summary: '介绍' }] }); } });
+  const characters = await service.searchEntities({ kind: 'character', keyword: ' 测试 ', offset: 12, limit: 12 });
+  assert.equal(calls[0].url, 'https://api.bgm.tv/v0/search/characters?limit=12&offset=12');
+  assert.equal(characters.total, 17);
+  assert.equal(characters.items[0].name, '测试');
+  await service.searchEntities({ kind: 'voice', keyword: '姓名' });
+  assert.equal(calls[1].url, 'https://api.bgm.tv/v0/search/persons?limit=12&offset=0');
+  assert.deepEqual(JSON.parse(calls[1].options.body).filter, { career: ['seiyu'] });
+  await service.searchEntities({ kind: 'staff', keyword: '公司' });
+  assert.equal(JSON.parse(calls[2].options.body).filter, undefined);
+  await assert.rejects(service.searchEntities({ kind: 'other', keyword: '测试' }), /类别/);
+  await assert.rejects(service.searchEntities({ kind: 'voice', keyword: ' ' }), /关键词/);
+});
+
+test('associated anime distinguishes voice characters and staff, deduplicates and bounds results', async () => {
+  let url;
+  let data = [];
+  const service = createBangumiService({ fetchImpl: async value => { url = value; return Response.json(data); } });
+  data = [{ id: 1, type: 2, name: '作品', name_cn: '中文', staff: '主角' }, { id: 2, type: 1, name: '书', staff: '角色' }];
+  assert.deepEqual((await service.entityAnime({ kind: 'character', id: 4 })).items, [{ id: 1, name: '作品', nameCn: '中文', roles: ['主角'] }]);
+  assert.match(url, /characters\/4\/subjects$/);
+  data = [{ id: 11, name: '角色甲', subject_id: 3, subject_type: 2, subject_name: 'A', subject_name_cn: '动画' }, { id: 12, name: '角色乙', subject_id: 3, subject_type: 2, subject_name: 'A', subject_name_cn: '动画' }, { id: 13, name: '书角色', subject_id: 4, subject_type: 1 }];
+  assert.deepEqual((await service.entityAnime({ kind: 'voice', id: 6 })).items, [{ id: 3, name: 'A', nameCn: '动画', roles: ['角色甲', '角色乙'] }]);
+  assert.match(url, /persons\/6\/characters$/);
+  data = Array.from({ length: 61 }, (_, i) => ({ id: i + 1, type: 2, name: '动画', staff: '导演' }));
+  const staff = await service.entityAnime({ kind: 'staff', id: 9 });
+  assert.match(url, /persons\/9\/subjects$/);
+  assert.equal(staff.total, 61);
+  assert.equal(staff.truncated, true);
+  assert.equal(staff.items.length, 60);
+  const next = await service.entityAnime({ kind: 'staff', id: 9, offset: 60 });
+  assert.equal(next.items.length, 1);
+  assert.equal(next.truncated, false);
+  await assert.rejects(service.entityAnime({ kind: 'staff', id: -1 }), /正整数/);
+});
 
 test('episode lookup uses main-episode filter and bounded pagination', async () => {
   let url;

@@ -74,7 +74,8 @@ export function createBangumiAccount({ credentials, fetchImpl = globalThis.fetch
       status: Number.isInteger(item.type) ? item.type : null,
       rating: Number.isInteger(item.rate) ? item.rate : null,
       progress: Number.isInteger(item.ep_status) ? item.ep_status : null,
-      private: item.private === true,
+      // Unknown privacy must never silently become a public local entry.
+      private: item.private !== false,
     }));
     return { total: Number.isInteger(data.total) ? data.total : items.length, offset, limit, items };
   }

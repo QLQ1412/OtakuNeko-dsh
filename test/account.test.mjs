@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { createBangumiAccount } from '../src/account.js';
 import { createFetchRoute } from '../src/bangumi.js';
 
+test('unknown remote privacy is treated as private', async () => {
+  const credentials = { async readRecord() { return { kind: 'grant', payload: { token: 'token', user: { username: 'alice' } } }; } };
+  const service = createBangumiAccount({ credentials, fetchImpl: async () => Response.json({ total: 1, data: [{ subject_id: 5, type: 1 }] }) });
+  assert.equal((await service.remoteCollections()).items[0].private, true);
+});
+
 test('remote collections use workspace credentials and return only bounded safe fields', async () => {
   const records = new Map([['a', { kind: 'grant', payload: { token: 'secret-token', user: { username: 'alice' } } }]]);
   const credentials = { async readRecord(key) { return records.get(key); } };

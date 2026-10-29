@@ -8,6 +8,15 @@ importers:
 
   .:
     devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5
+        version: 4.0.5
+      '@deepseek-ai/dsh-scope':
+        specifier: 0.2.1-rc.3
+        version: 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
+      '@deepseek-ai/dsh-skill':
+        specifier: 0.2.1-rc.3
+        version: 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-llm@0.2.1-rc.3(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-scope@0.2.1-rc.3(@deepseek-ai/cordis@4.0.5))
       '@deepseek-ai/dsh-tools':
         specifier: 0.2.1-rc.3
         version: 0.2.1-rc.3(1f5d0a9b849aaa1244bc4f2e453f609a)
@@ -110,6 +119,13 @@ packages:
     resolution: {integrity: sha512-z1Dfn6yB2YMm9iNThPHaIYCx0Y/mKjm+fMrWFtnPZmX0fJXVmTIr4RAfLF7ZFJk6qd52SUl8d2uX+uNbrPJESg==}
     peerDependencies:
       '@deepseek-ai/cordis': ~4.0.5
+      '@deepseek-ai/dsh-scope': 0.2.1-rc.3
+
+  '@deepseek-ai/dsh-skill@0.2.1-rc.3':
+    resolution: {integrity: sha512-jQrGCS0D5zg7g4mB95ly1yvWglMUJYx0OMIdxjHqe4X3VRt8TKwVH2Yy0WORI+22w965zZPly39c3teFwWrE2Q==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.5
+      '@deepseek-ai/dsh-llm': 0.2.1-rc.3
       '@deepseek-ai/dsh-scope': 0.2.1-rc.3
 
   '@deepseek-ai/dsh-system-prompt@0.2.1-rc.3':
@@ -682,6 +698,14 @@ snapshots:
       '@deepseek-ai/dsh-llm': 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
       '@deepseek-ai/dsh-scope': 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
       '@deepseek-ai/dsh-util-values': 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
+
+  '@deepseek-ai/dsh-skill@0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-llm@0.2.1-rc.3(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-scope@0.2.1-rc.3(@deepseek-ai/cordis@4.0.5))':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.5
+      '@deepseek-ai/dsh-llm': 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
+      '@deepseek-ai/dsh-scope': 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
+      '@deepseek-ai/dsh-util-values': 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
+      '@deepseek-ai/schemastery': 3.18.5
 
   '@deepseek-ai/dsh-system-prompt@0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-llm@0.2.1-rc.3(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-scope@0.2.1-rc.3(@deepseek-ai/cordis@4.0.5))':
     dependencies:

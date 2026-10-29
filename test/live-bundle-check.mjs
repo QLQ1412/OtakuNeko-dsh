@@ -27,11 +27,21 @@ try {
   await call('workspace-activate');
   await call('network-save', { proxy: process.argv[2] });
   const item = await call('network-test');
-  if (item.id !== 1 || scopedTools.length !== 8) throw new Error('Unexpected result');
+  if (item.id !== 1 || scopedTools.length !== 16) throw new Error('Unexpected result');
   const detail = JSON.parse(await scopedTools.find(tool => tool.name === 'otakuneko_native_anime_details').execute({ subjectId: 1 }, { agent }));
   if (detail.id !== 1) throw new Error('Tool did not use workspace proxy');
   const episodes = JSON.parse(await scopedTools.find(tool => tool.name === 'otakuneko_native_anime_episodes').execute({ subjectId: 1, limit: 5 }, { agent }));
   if (!Array.isArray(episodes.items)) throw new Error('Episode lookup failed');
+  const watch = JSON.parse(await scopedTools.find(tool => tool.name === 'otakuneko_native_watch_links').execute({ subjectId: 37258 }, { agent }));
+  if (!watch.platforms.some(link => link.site === 'bilibili') || watch.dataset.state === 'unavailable') throw new Error('Verified platform link not found');
+  console.log(`Watch links: dataset=${watch.dataset.state}; platforms=${watch.platforms.length}`);
+  for (const [kind, keyword] of [['character', '綾波レイ'], ['voice', '花澤香菜'], ['staff', '京都アニメーション']]) {
+    const result = JSON.parse(await scopedTools.find(tool => tool.name === 'otakuneko_native_search_entities').execute({ kind, keyword, limit: 5 }, { agent }));
+    if (!result.items.length) throw new Error(`No ${kind} candidates for real search`);
+    const works = JSON.parse(await scopedTools.find(tool => tool.name === 'otakuneko_native_entity_anime').execute({ kind, id: result.items[0].id }, { agent }));
+    if (!Array.isArray(works.items)) throw new Error(`No ${kind} relation response`);
+    console.log(`${kind}: candidates=${result.items.length}; related anime=${works.total}`);
+  }
   console.log('Bundled plugin: workspace activation, proxy and Agent tool succeeded.');
 } finally {
   for (const dispose of cleanup.reverse()) dispose();

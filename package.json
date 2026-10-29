@@ -1,6 +1,6 @@
 {
   "name": "otakuneko-harness-native-plugin",
-  "version": "0.2.0-alpha.12",
+  "version": "0.2.0-alpha.23",
   "private": true,
   "description": "Native OtakuNeko capabilities for DeepSeek Harness",
   "license": "MIT",
@@ -20,6 +20,7 @@
   },
   "files": [
     "lib/",
+    "skills/",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
@@ -44,6 +45,9 @@
     "@deepseek-ai/dsh-tools": "0.2.1-rc.3"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-scope": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-skill": "0.2.1-rc.3",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
     "@deepseek-ai/schemastery": "^3.18.0",
     "tsdown": "^0.22.2",

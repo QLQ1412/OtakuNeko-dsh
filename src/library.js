@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -32,7 +32,7 @@ function mapRow(row) {
   };
 }
 
-export function createLibraryStore({ databasePath = defaultDatabasePath() } = {}) {
+export function createLibraryStore({ databasePath = defaultDatabasePath(), legacyDatabasePath } = {}) {
   function withDatabase(callback) {
     mkdirSync(dirname(databasePath), { recursive: true });
     const db = new DatabaseSync(databasePath);
@@ -60,12 +60,119 @@ export function createLibraryStore({ databasePath = defaultDatabasePath() } = {}
     } finally { db.close(); }
   }
 
-  function listCollections({ includePrivate = false, limit = 100, offset = 0 } = {}) {
+  function listCollections({ includePrivate = false, limit = 100, offset = 0, status, keyword = '' } = {}) {
     const count = integer(limit, '数量', 1, 200, 100);
     const skip = integer(offset, '偏移量', 0, 1000000, 0);
+    if (status !== undefined && status !== null) integer(status, '收藏状态', 1, 5);
+    const query = text(keyword, '关键词', 100).replace(/[\\%_]/g, '\\$&');
     return withDatabase(db => db.prepare(
-      'SELECT * FROM collections WHERE (? = 1 OR is_private = 0) ORDER BY updated_at DESC, source, source_id LIMIT ? OFFSET ?',
-    ).all(includePrivate ? 1 : 0, count, skip).map(mapRow));
+      `SELECT * FROM collections WHERE (? = 1 OR is_private = 0) AND (? IS NULL OR status = ?)
+        AND (? = '' OR name LIKE ? ESCAPE '\\' OR name_cn LIKE ? ESCAPE '\\') ORDER BY updated_at DESC, source, source_id LIMIT ? OFFSET ?`,
+    ).all(includePrivate ? 1 : 0, status ?? null, status ?? null, query, `%${query}%`, `%${query}%`, count, skip).map(mapRow));
+  }
+
+  function deleteCollection({ source, sourceId, expectedUpdatedAt } = {}) {
+    source = text(source, '来源', 32);
+    sourceId = text(typeof sourceId === 'number' ? String(sourceId) : sourceId, '条目 ID', 100);
+    if (!/^[a-z][a-z0-9_-]*$/.test(source) || !sourceId || typeof expectedUpdatedAt !== 'string') throw new Error('删除参数无效');
+    return withDatabase(db => {
+      if (!db.prepare('DELETE FROM collections WHERE source = ? AND source_id = ? AND updated_at = ?').run(source, sourceId, expectedUpdatedAt).changes) throw new Error('收藏已更改或不存在，请刷新后重试');
+      return { deleted: true };
+    });
+  }
+
+  function updatePublicCollection({ source = 'bangumi', sourceId, status, progress, rating } = {}) {
+    source = text(source, '来源', 32);
+    sourceId = text(typeof sourceId === 'number' ? String(sourceId) : sourceId, '条目 ID', 100);
+    if (!/^[a-z][a-z0-9_-]*$/.test(source) || !sourceId) throw new Error('收藏来源或条目 ID 无效');
+    if (status === undefined && progress === undefined && rating === undefined) throw new Error('请指定要修改的状态、进度或评分');
+    const current = withDatabase(db => db.prepare('SELECT * FROM collections WHERE source = ? AND source_id = ? AND is_private = 0').get(source, sourceId));
+    if (!current) throw new Error('未找到可供 Agent 修改的本地收藏');
+    const result = saveCollection({ source, sourceId, expectedUpdatedAt: current.updated_at, status, progress, rating });
+    const { comment, tags, ...safe } = result;
+    return safe;
+  }
+
+  function collectionStats({ includePrivate = false } = {}) {
+    return withDatabase(db => {
+      const rows = db.prepare('SELECT status, count(*) AS count FROM collections WHERE (? = 1 OR is_private = 0) GROUP BY status').all(includePrivate ? 1 : 0);
+      const counts = [0, 0, 0, 0, 0];
+      for (const row of rows) counts[row.status - 1] = row.count;
+      return { total: counts.reduce((sum, count) => sum + count, 0), wish: counts[0], completed: counts[1], watching: counts[2], onHold: counts[3], dropped: counts[4] };
+    });
+  }
+
+  function readLegacyCollections() {
+    if (!legacyDatabasePath || !existsSync(legacyDatabasePath)) return null;
+    const source = new DatabaseSync(legacyDatabasePath, { readOnly: true });
+    try {
+      source.exec('PRAGMA query_only = ON; PRAGMA busy_timeout = 5000');
+      if (source.prepare('PRAGMA user_version').get().user_version !== 1) throw new Error('旧收藏数据库版本不受支持，未进行迁移');
+      const rows = source.prepare('SELECT * FROM collections LIMIT 50001').all();
+      if (rows.length > 50000) throw new Error('旧收藏超过 50000 条，请分批迁移');
+      for (const row of rows) {
+        let tags;
+        try { tags = JSON.parse(row.tags_json); } catch { throw new Error('旧收藏标签数据无效，未进行迁移'); }
+        if (typeof row.source !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(row.source) || typeof row.source_id !== 'string' || !row.source_id || row.source_id.length > 100 || typeof row.name !== 'string' || row.name.length > 300 || typeof row.name_cn !== 'string' || row.name_cn.length > 300 || (!row.name.trim() && !row.name_cn.trim()) || !Number.isInteger(row.status) || row.status < 1 || row.status > 5 || !Number.isInteger(row.progress) || row.progress < 0 || row.progress > 100000 || (row.rating !== null && (!Number.isInteger(row.rating) || row.rating < 0 || row.rating > 10)) || ![0, 1].includes(row.is_private) || typeof row.comment !== 'string' || row.comment.length > 5000 || !Array.isArray(tags) || tags.length > 30 || tags.some(tag => typeof tag !== 'string' || tag.length > 50) || typeof row.updated_at !== 'string') throw new Error('旧收藏数据无效，未进行迁移');
+      }
+      return rows;
+    } finally { source.close(); }
+  }
+
+  function previewLegacyCollections() {
+    const rows = readLegacyCollections();
+    if (!rows) return { available: false, total: 0, added: 0, skipped: 0 };
+    return withDatabase(db => {
+      const find = db.prepare('SELECT 1 FROM collections WHERE source = ? AND source_id = ?');
+      let skipped = 0;
+      for (const row of rows) if (find.get(row.source, row.source_id)) skipped++;
+      return { available: true, total: rows.length, added: rows.length - skipped, skipped };
+    });
+  }
+
+  function importLegacyCollections() {
+    const rows = readLegacyCollections();
+    if (!rows) throw new Error('当前工作区没有旧版收藏数据库');
+    return withDatabase(db => {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const insert = db.prepare(`INSERT INTO collections (source, source_id, name, name_cn, status, progress, rating, is_private, comment, tags_json, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(source, source_id) DO NOTHING`);
+        let added = 0;
+        for (const row of rows) added += Number(insert.run(row.source, row.source_id, row.name, row.name_cn, row.status, row.progress, row.rating, row.is_private, row.comment, row.tags_json, row.updated_at).changes);
+        db.exec('COMMIT');
+        return { total: rows.length, added, skipped: rows.length - added };
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    });
+  }
+
+  function importRemoteCollections(items) {
+    if (!Array.isArray(items) || items.length < 1 || items.length > 20) throw new Error('请选择 1 至 20 项收藏导入');
+    const seen = new Set();
+    const normalized = items.map(item => {
+      if (!item || !Number.isSafeInteger(item.id) || item.id < 1 || seen.has(item.id)) throw new Error('收藏条目 ID 无效或重复');
+      seen.add(item.id);
+      const name = text(item.name, '名称', 300);
+      const nameCn = text(item.nameCn, '中文名称', 300);
+      const status = integer(item.status, '收藏状态', 1, 5);
+      if (status === undefined) throw new Error('收藏状态缺失，未导入');
+      const progress = item.progress === null ? 0 : integer(item.progress, '观看进度', 0, 100000, 0);
+      const rating = item.rating === null ? null : integer(item.rating, '评分', 0, 10, null);
+      if (typeof item.private !== 'boolean') throw new Error('隐私设置无效，未导入');
+      return { sourceId: String(item.id), name: name || (!nameCn ? `Bangumi #${item.id}` : ''), nameCn, status, progress, rating, private: item.private };
+    });
+    return withDatabase(db => {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const insert = db.prepare(`INSERT INTO collections (source, source_id, name, name_cn, status, progress, rating, is_private, comment, tags_json, updated_at)
+          VALUES ('bangumi', ?, ?, ?, ?, ?, ?, ?, '', '[]', ?) ON CONFLICT(source, source_id) DO NOTHING`);
+        let imported = 0;
+        const updatedAt = new Date().toISOString();
+        for (const item of normalized) imported += Number(insert.run(item.sourceId, item.name, item.nameCn, item.status, item.progress, item.rating, item.private ? 1 : 0, updatedAt).changes);
+        db.exec('COMMIT');
+        return { selected: normalized.length, imported, skipped: normalized.length - imported };
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    });
   }
 
   function saveCollection(input) {
@@ -115,5 +222,5 @@ export function createLibraryStore({ databasePath = defaultDatabasePath() } = {}
     });
   }
 
-  return { listCollections, saveCollection };
+  return { listCollections, saveCollection, deleteCollection, updatePublicCollection, collectionStats, importRemoteCollections, previewLegacyCollections, importLegacyCollections };
 }

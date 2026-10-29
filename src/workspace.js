@@ -16,10 +16,17 @@ export function workspaceHash(workspaceId) {
   return createHash('sha256').update(workspaceId).digest('hex');
 }
 
-export function workspaceDatabasePath(workspaceId) {
+function storageHome() {
   const configured = process.env.DSH_HOME?.trim();
-  const home = configured ? resolve(configured.replace(/^~(?=[\\/]|$)/, homedir())) : join(homedir(), '.dsh');
-  return join(home, 'otakuneko-native', 'workspaces', workspaceHash(workspaceId), 'library.sqlite3');
+  return configured ? resolve(configured.replace(/^~(?=[\\/]|$)/, homedir())) : join(homedir(), '.dsh');
+}
+
+export function sharedLibraryPath() {
+  return join(storageHome(), 'otakuneko-native', 'shared-library.sqlite3');
+}
+
+export function workspaceDatabasePath(workspaceId) {
+  return join(storageHome(), 'otakuneko-native', 'workspaces', workspaceHash(workspaceId), 'library.sqlite3');
 }
 
 export function workspaceEnabled(workspaceId) {

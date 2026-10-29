@@ -1,12 +1,22 @@
 const BASE_URL = 'https://api.bgm.tv/v0';
 const TIMEOUT_MS = 12000;
 
+function imageUrl(images) {
+  const raw = images?.medium || images?.large || images?.common || images?.small;
+  if (typeof raw !== 'string') return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && ['lain.bgm.tv', 'bgm.tv', 'bangumi.tv'].includes(url.hostname) ? url.href : null;
+  } catch { return null; }
+}
+
 function subject(raw) {
   if (!raw || !Number.isSafeInteger(raw.id) || raw.id < 1) return null;
   return {
     id: raw.id,
     name: typeof raw.name === 'string' ? raw.name : '',
     nameCn: typeof raw.name_cn === 'string' ? raw.name_cn : '',
+    image: imageUrl(raw.images),
     date: typeof raw.date === 'string' ? raw.date : (typeof raw.air_date === 'string' ? raw.air_date : null),
     summary: typeof raw.summary === 'string' ? raw.summary.slice(0, 1200) : '',
     score: Number.isFinite(raw.rating?.score) ? raw.rating.score : null,
@@ -55,6 +65,39 @@ export function createBangumiService({ fetchImpl = globalThis.fetch } = {}) {
     }, signal);
     if (!Array.isArray(data?.data)) throw new Error('Bangumi 搜索结果格式不正确');
     return { keyword: keyword.trim(), total: Number.isFinite(data.total) ? data.total : data.data.length, items: data.data.map(subject).filter(Boolean) };
+  }
+
+  async function searchEntities({ kind, keyword, offset = 0, limit = 12 }, signal) {
+    if (!['character', 'voice', 'staff'].includes(kind)) throw new Error('搜索类别无效');
+    if (typeof keyword !== 'string' || !keyword.trim() || keyword.trim().length > 100) throw new Error('关键词必须是 1 到 100 个字符');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20 || !Number.isInteger(offset) || offset < 0 || offset > 1000000) throw new Error('分页参数无效');
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const body = { keyword: keyword.trim(), ...(kind === 'voice' ? { filter: { career: ['seiyu'] } } : {}) };
+    const data = await request(`/search/${kind === 'character' ? 'characters' : 'persons'}?${query}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, signal);
+    if (!Array.isArray(data?.data)) throw new Error('Bangumi 搜索结果格式不正确');
+    const items = data.data.filter(item => Number.isSafeInteger(item?.id) && item.id > 0 && typeof item.name === 'string').slice(0, limit).map(item => ({ id: item.id, name: item.name.slice(0, 300), image: imageUrl(item.images), description: typeof item.short_summary === 'string' ? item.short_summary.slice(0, 200) : '', career: Array.isArray(item.career) ? item.career.filter(x => typeof x === 'string').slice(0, 10) : [] }));
+    return { kind, keyword: keyword.trim(), total: Number.isSafeInteger(data.total) && data.total >= 0 ? data.total : items.length, offset, limit, items };
+  }
+
+  async function entityAnime({ kind, id, offset = 0, limit = 60 }, signal) {
+    if (!['character', 'voice', 'staff'].includes(kind)) throw new Error('搜索类别无效');
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error('角色或人物 ID 必须是正整数');
+    if (!Number.isInteger(offset) || offset < 0 || offset > 1000000 || !Number.isInteger(limit) || limit < 1 || limit > 60) throw new Error('分页参数无效');
+    const path = kind === 'character' ? `/characters/${id}/subjects` : kind === 'voice' ? `/persons/${id}/characters` : `/persons/${id}/subjects`;
+    const data = await request(path, {}, signal);
+    if (!Array.isArray(data)) throw new Error('Bangumi 关联作品数据格式不正确');
+    const grouped = new Map();
+    for (const item of data) {
+      const subjectId = kind === 'voice' ? item?.subject_id : item?.id;
+      const subjectType = kind === 'voice' ? item?.subject_type : item?.type;
+      if (subjectType !== 2 || !Number.isSafeInteger(subjectId) || subjectId < 1) continue;
+      if (!grouped.has(subjectId)) grouped.set(subjectId, { id: subjectId, name: typeof (kind === 'voice' ? item.subject_name : item.name) === 'string' ? (kind === 'voice' ? item.subject_name : item.name).slice(0, 300) : '', nameCn: typeof (kind === 'voice' ? item.subject_name_cn : item.name_cn) === 'string' ? (kind === 'voice' ? item.subject_name_cn : item.name_cn).slice(0, 300) : '', roles: [] });
+      const role = kind === 'voice' ? item.name : item.staff;
+      const roles = grouped.get(subjectId).roles;
+      if (typeof role === 'string' && role && !roles.includes(role) && roles.length < 8) roles.push(role.slice(0, 200));
+    }
+    const all = [...grouped.values()];
+    return { kind, entityId: id, total: all.length, offset, limit, truncated: offset + limit < all.length, items: all.slice(offset, offset + limit) };
   }
 
   async function details(id, signal) {
@@ -139,7 +182,7 @@ export function createBangumiService({ fetchImpl = globalThis.fetch } = {}) {
     }).sort((a, b) => a.weekday - b.weekday);
   }
 
-  return { search, details, calendar, advancedSearch, episodes, staff: (id, signal) => related(id, 'persons', signal), cast: (id, signal) => related(id, 'characters', signal) };
+  return { search, searchEntities, entityAnime, details, calendar, advancedSearch, episodes, staff: (id, signal) => related(id, 'persons', signal), cast: (id, signal) => related(id, 'characters', signal) };
 }
 
 export function createFetchRoute(service, operation) {
@@ -162,13 +205,29 @@ export function createFetchRoute(service, operation) {
       let result;
       try {
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('请求参数无效');
+        if (operation.startsWith('collection-') && service.canAccessCollections && !service.canAccessCollections(payload.sessionId)) throw new Error('请先在当前工作区打开 OtakuNeko 侧栏');
         let value;
         const scoped = service.forSession ? service.forSession(payload.sessionId) : service;
-        if (operation === 'search') value = await scoped.search(payload.keyword, payload.limit, request.signal);
+        if (operation === 'conversation-result') value = service.conversationResult(payload.sessionId);
+        else if (operation === 'search') value = await scoped.search(payload.keyword, payload.limit, request.signal);
+        else if (operation === 'entity-search') value = await scoped.searchEntities(payload, request.signal);
+        else if (operation === 'entity-anime') value = await scoped.entityAnime(payload, request.signal);
+        else if (operation === 'watch-links') value = await scoped.watchLinks(payload.id, request.signal);
         else if (operation === 'details') value = await scoped.details(payload.id, request.signal);
         else if (operation === 'calendar') value = await scoped.calendar(request.signal);
-        else if (operation === 'collection-list') value = scoped.listCollections({ includePrivate: true, limit: payload.limit, offset: payload.offset });
+        else if (operation === 'collection-list') value = scoped.listCollections({ includePrivate: true, limit: payload.limit, offset: payload.offset, status: payload.status, keyword: payload.keyword });
         else if (operation === 'collection-save') value = scoped.saveCollection(payload);
+        else if (operation === 'collection-delete') value = scoped.deleteCollection(payload);
+        else if (operation === 'collection-stats') value = scoped.collectionStats({ includePrivate: true });
+        else if (operation === 'collection-import') value = scoped.importRemoteCollections(payload.items);
+        else if (operation === 'collection-legacy-preview') value = scoped.previewLegacyCollections();
+        else if (operation === 'collection-legacy-import') value = scoped.importLegacyCollections();
+        else if (operation === 'memory-list') value = scoped.listMemories(payload.sessionId);
+        else if (operation === 'memory-save') value = scoped.saveMemory(payload.sessionId, payload.content);
+        else if (operation === 'memory-delete') value = scoped.deleteMemory(payload.sessionId, payload.id);
+        else if (operation === 'schedule-list') value = scoped.listSchedules({ includePrivate: true, weekday: payload.weekday });
+        else if (operation === 'schedule-save') value = scoped.saveSchedule(payload);
+        else if (operation === 'schedule-delete') value = scoped.deleteSchedule(payload);
         else if (operation === 'account-status') value = await scoped.accountStatus();
         else if (operation === 'account-connect') value = await scoped.accountConnect(payload.token, request.signal);
         else if (operation === 'account-disconnect') value = await scoped.accountDisconnect();
